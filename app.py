@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Project Helix", layout="wide")
 st.title("🧠 Project Helix")
 st.subheader("MRI Visualization: 2D + 3D")
-st.write("App version: STEP 11 – 3D Reconstruction")
+st.write("App version: STEP 11 – Stable 3D Reconstruction")
 
 # ---------------- GCP AUTH ----------------
 gcp_creds = dict(st.secrets["gcp"])
@@ -30,6 +30,7 @@ storage_client = storage.Client.from_service_account_info(gcp_creds)
 
 # ---------------- CONFIG ----------------
 BUCKET_NAME = "project-helix-mri"
+st.write("Using bucket:", BUCKET_NAME)
 
 # ---------------- UI ----------------
 uploaded_file = st.file_uploader(
@@ -40,17 +41,18 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     st.info("Uploading MRI to Google Cloud...")
 
-    # ---- SAVE TEMP FILE WITH EXTENSION ----
+    # ---- SAVE TEMP FILE WITH CORRECT EXTENSION ----
     suffix = ".nii.gz" if uploaded_file.name.endswith(".nii.gz") else ".nii"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(uploaded_file.getbuffer())
         tmp_path = tmp.name
 
-    # ---- UPLOAD TO GCS ----
+    # ---- UPLOAD TO CLOUD STORAGE ----
     bucket = storage_client.bucket(BUCKET_NAME)
     blob = bucket.blob(f"uploads/{uploaded_file.name}")
     blob.upload_from_filename(tmp_path)
 
+    # ---- LOG TO FIRESTORE ----
     db.collection("uploads").add({
         "filename": uploaded_file.name,
         "gcs_path": f"gs://{BUCKET_NAME}/uploads/{uploaded_file.name}",
@@ -62,34 +64,34 @@ if uploaded_file is not None:
     nii = nib.load(tmp_path)
     volume = nii.get_fdata()
 
-    # ---------------- 2D VIEW ----------------
+    # ===================== 2D VIEW =====================
     st.subheader("🖼️ 2D Slice View with Tumor Overlay")
 
     max_slice = volume.shape[2] - 1
     slice_idx = st.slider("Select slice", 0, max_slice, max_slice // 2)
 
     slice_img = volume[:, :, slice_idx]
-    threshold = np.percentile(slice_img, 99)
-    tumor_mask_2d = slice_img > threshold
 
-    fig, ax = plt.subplots(figsize=(5, 5))
-    ax.imshow(slice_img.T, cmap="gray", origin="lower")
-    ax.imshow(tumor_mask_2d.T, cmap="Reds", alpha=0.4, origin="lower")
-    ax.axis("off")
-    st.pyplot(fig)
+    # Simple placeholder tumor mask (2D)
+    threshold_2d = np.percentile(slice_img, 99)
+    tumor_mask_2d = slice_img > threshold_2d
 
-    # ---------------- 3D VIEW ----------------
+    fig2d, ax2d = plt.subplots(figsize=(5, 5))
+    ax2d.imshow(slice_img.T, cmap="gray", origin="lower")
+    ax2d.imshow(tumor_mask_2d.T, cmap="Reds", alpha=0.4, origin="lower")
+    ax2d.set_title(f"Slice {slice_idx}")
+    ax2d.axis("off")
+
+    st.pyplot(fig2d)
+
+    # ===================== 3D VIEW =====================
     st.subheader("🧊 3D Brain & Tumor Reconstruction")
 
-    # Normalize volume
-    vol_norm = (volume - volume.min()) / (volume.max() - volume.min())
+    # Normalize volume for brain surface
+    vol_norm = (volume - volume.min()) / (volume.max() - volume.min() + 1e-8)
 
-    # Brain surface
+    # ---- Brain surface (always exists) ----
     verts_b, faces_b, _, _ = measure.marching_cubes(vol_norm, level=0.2)
-
-    # Tumor mask (3D placeholder)
-    tumor_mask_3d = volume > np.percentile(volume, 99.5)
-    verts_t, faces_t, _, _ = measure.marching_cubes(tumor_mask_3d, level=0.5)
 
     brain_mesh = go.Mesh3d(
         x=verts_b[:, 0],
@@ -103,24 +105,43 @@ if uploaded_file is not None:
         name="Brain"
     )
 
-    tumor_mesh = go.Mesh3d(
-        x=verts_t[:, 0],
-        y=verts_t[:, 1],
-        z=verts_t[:, 2],
-        i=faces_t[:, 0],
-        j=faces_t[:, 1],
-        k=faces_t[:, 2],
-        color="red",
-        opacity=0.8,
-        name="Tumor"
-    )
+    # ---- Tumor surface (SAFE: only if it exists) ----
+    tumor_mask_3d = volume > np.percentile(volume, 99.5)
+    tumor_mesh = None
 
-    fig3d = go.Figure(data=[brain_mesh, tumor_mesh])
+    if np.any(tumor_mask_3d):
+        verts_t, faces_t, _, _ = measure.marching_cubes(
+            tumor_mask_3d.astype(np.uint8),
+            level=0.5
+        )
+
+        tumor_mesh = go.Mesh3d(
+            x=verts_t[:, 0],
+            y=verts_t[:, 1],
+            z=verts_t[:, 2],
+            i=faces_t[:, 0],
+            j=faces_t[:, 1],
+            k=faces_t[:, 2],
+            color="red",
+            opacity=0.8,
+            name="Tumor"
+        )
+    else:
+        st.warning("⚠️ No tumor‑like region detected for 3D rendering in this scan.")
+
+    # ---- Plot 3D ----
+    meshes = [brain_mesh]
+    if tumor_mesh is not None:
+        meshes.append(tumor_mesh)
+
+    fig3d = go.Figure(data=meshes)
     fig3d.update_layout(
         scene=dict(aspectmode="data"),
-        height=600
+        height=600,
+        margin=dict(l=0, r=0, t=30, b=0)
     )
 
     st.plotly_chart(fig3d, use_container_width=True)
 
+    # ---- CLEANUP ----
     os.remove(tmp_path)
