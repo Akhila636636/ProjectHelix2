@@ -12,8 +12,8 @@ from firebase_admin import credentials, firestore
 # ---------------- PAGE SETUP ----------------
 st.set_page_config(page_title="Project Helix", layout="centered")
 st.title("🧠 Project Helix")
-st.subheader("MRI Upload & Slice Viewer")
-st.write("App version: STEP 9 – Slice Viewer (Stable)")
+st.subheader("MRI Slice Viewer with Tumor Overlay")
+st.write("App version: STEP 10 – Tumor Overlay")
 
 # ---------------- GCP AUTH ----------------
 gcp_creds = dict(st.secrets["gcp"])
@@ -28,8 +28,6 @@ storage_client = storage.Client.from_service_account_info(gcp_creds)
 # ---------------- CONFIG ----------------
 BUCKET_NAME = "project-helix-mri"
 
-st.write("Using bucket:", BUCKET_NAME)
-
 # ---------------- UI ----------------
 uploaded_file = st.file_uploader(
     "Upload MRI scan (.nii or .nii.gz)",
@@ -39,48 +37,52 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     st.info("Uploading MRI to Google Cloud...")
 
-    # -------- SAVE TEMP FILE WITH CORRECT EXTENSION --------
+    # ---- SAVE TEMP FILE WITH CORRECT EXTENSION ----
     suffix = ".nii.gz" if uploaded_file.name.endswith(".nii.gz") else ".nii"
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(uploaded_file.getbuffer())
         tmp_path = tmp.name
 
-    # -------- UPLOAD TO CLOUD STORAGE --------
+    # ---- UPLOAD TO CLOUD STORAGE ----
     bucket = storage_client.bucket(BUCKET_NAME)
     blob = bucket.blob(f"uploads/{uploaded_file.name}")
     blob.upload_from_filename(tmp_path)
 
-    # -------- LOG TO FIRESTORE --------
+    # ---- LOG TO FIRESTORE ----
     db.collection("uploads").add({
         "filename": uploaded_file.name,
         "gcs_path": f"gs://{BUCKET_NAME}/uploads/{uploaded_file.name}",
     })
 
-    st.success("✅ MRI uploaded successfully to Google Cloud")
+    st.success("✅ MRI uploaded successfully")
 
-    # -------- LOAD MRI WITH NIBABEL --------
+    # ---- LOAD MRI ----
     nii = nib.load(tmp_path)
     volume = nii.get_fdata()
 
-    st.subheader("🖼️ Slice‑by‑Slice MRI View")
+    st.subheader("🖼️ Slice‑by‑Slice MRI with Tumor Overlay")
 
     max_slice = volume.shape[2] - 1
-    slice_idx = st.slider(
-        "Select slice",
-        0,
-        max_slice,
-        max_slice // 2
-    )
+    slice_idx = st.slider("Select slice", 0, max_slice, max_slice // 2)
 
     slice_img = volume[:, :, slice_idx]
 
+    # ---- SIMPLE TUMOR MASK (PLACEHOLDER) ----
+    threshold = np.percentile(slice_img, 99)
+    tumor_mask = slice_img > threshold
+
+    # ---- PLOT ----
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.imshow(slice_img.T, cmap="gray", origin="lower")
-    ax.set_title(f"Slice {slice_idx}")
+    ax.imshow(
+        tumor_mask.T,
+        cmap="Reds",
+        alpha=0.4,
+        origin="lower"
+    )
+    ax.set_title(f"Slice {slice_idx} (Tumor Overlay)")
     ax.axis("off")
 
     st.pyplot(fig)
 
-    # -------- CLEANUP --------
     os.remove(tmp_path)
