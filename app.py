@@ -24,7 +24,7 @@ db = firestore.client()
 storage_client = storage.Client.from_service_account_info(dict(gcp_creds))
 
 # ---------- CONFIG ----------
-BUCKET_NAME = "project-helix-mri-akhila"  # change if needed
+BUCKET_NAME = "project-helix-mri" 
 
 # ---------- UI ----------
 uploaded_files = st.file_uploader(
