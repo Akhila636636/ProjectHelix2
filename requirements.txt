@@ -4,4 +4,6 @@ firebase-admin
 nibabel
 numpy
 matplotlib
+scikit-image
+plotly
 
