@@ -1,0 +1,6 @@
+streamlit
+google-cloud-storage
+firebase-admin
+nibabel
+numpy
+matplotlib
