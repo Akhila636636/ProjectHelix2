@@ -1,6 +1,9 @@
 import streamlit as st
 import os
 import tempfile
+import numpy as np
+import nibabel as nib
+import matplotlib.pyplot as plt
 from google.cloud import storage
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -8,12 +11,12 @@ from firebase_admin import credentials, firestore
 # ---------- PAGE SETUP ----------
 st.set_page_config(page_title="Project Helix", layout="centered")
 st.title("🧠 Project Helix")
-st.subheader("MRI Upload & Secure Storage")
+st.subheader("MRI Upload & Slice Viewer")
 
-# ---------- GCP AUTH (from Streamlit Secrets) ----------
+# ---------- GCP AUTH ----------
 gcp_creds = st.secrets["gcp"]
-
 cred = credentials.Certificate(dict(gcp_creds))
+
 if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
@@ -21,36 +24,51 @@ db = firestore.client()
 storage_client = storage.Client.from_service_account_info(dict(gcp_creds))
 
 # ---------- CONFIG ----------
-BUCKET_NAME = "project-helix-mri" 
+BUCKET_NAME = "project-helix-mri-akhila"  # change if needed
 
 # ---------- UI ----------
 uploaded_files = st.file_uploader(
-    "Upload MRI scans (.nii or .nii.gz)",
-    type=["nii", "nii.gz"],
-    accept_multiple_files=True
+    "Upload MRI scan (.nii or .nii.gz)",
+    type=["nii", "nii.gz"]
 )
 
 if uploaded_files:
-    st.info("Uploading files to Google Cloud…")
+    st.info("Uploading MRI to Google Cloud...")
 
-    for file in uploaded_files:
-        # Save temporarily
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(file.getbuffer())
-            tmp_path = tmp.name
+    # Save temp file
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(uploaded_files.getbuffer())
+        tmp_path = tmp.name
 
-        # Upload to GCS
-        bucket = storage_client.bucket(BUCKET_NAME)
-        blob = bucket.blob(f"uploads/{file.name}")
-        blob.upload_from_filename(tmp_path)
+    # Upload to GCS
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(f"uploads/{uploaded_files.name}")
+    blob.upload_from_filename(tmp_path)
 
-        # Save metadata to Firestore
-        db.collection("uploads").add({
-            "filename": file.name,
-            "gcs_path": f"gs://{BUCKET_NAME}/uploads/{file.name}",
-        })
+    # Log metadata
+    db.collection("uploads").add({
+        "filename": uploaded_files.name,
+        "gcs_path": f"gs://{BUCKET_NAME}/uploads/{uploaded_files.name}",
+    })
 
-        os.remove(tmp_path)
-        st.success(f"✅ Uploaded: {file.name}")
+    st.success("✅ MRI uploaded successfully")
 
-    st.success("🎉 All files uploaded and logged successfully!")
+    # ---------- LOAD MRI ----------
+    nii = nib.load(tmp_path)
+    volume = nii.get_fdata()
+
+    st.subheader("🖼️ Slice-by-Slice MRI View")
+
+    max_slice = volume.shape[2] - 1
+    slice_idx = st.slider("Select slice", 0, max_slice, max_slice // 2)
+
+    slice_img = volume[:, :, slice_idx]
+
+    fig, ax = plt.subplots()
+    ax.imshow(slice_img.T, cmap="gray", origin="lower")
+    ax.set_title(f"Slice {slice_idx}")
+    ax.axis("off")
+
+    st.pyplot(fig)
+
+    os.remove(tmp_path)
