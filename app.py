@@ -15,8 +15,7 @@ import plotly.graph_objects as go
 # ================= PAGE SETUP =================
 st.set_page_config(page_title="Project Helix", layout="wide")
 st.title("🧠 Project Helix")
-st.subheader("MRI Analysis with 2D & 3D Tumor Visualization")
-st.caption("Final MVP – Cloud + ML Ready")
+st.subheader("MRI Analysis with High‑Quality 2D & 3D Tumor Visualization")
 
 # ================= GCP AUTH =================
 gcp_creds = dict(st.secrets["gcp"])
@@ -35,7 +34,7 @@ BUCKET_NAME = "project-helix-mri"
 def vertex_ai_tumor_segmentation(volume):
     """
     Vertex‑AI‑ready tumor segmentation abstraction.
-    Replace internals with real Vertex endpoint later.
+    Replace internals with a real Vertex AI endpoint later.
     """
     vol_norm = (volume - volume.min()) / (volume.max() - volume.min() + 1e-8)
     threshold = np.percentile(vol_norm, 99.2)
@@ -82,8 +81,11 @@ if uploaded_file is not None:
     slice_img = volume[:, :, slice_idx]
     tumor_mask_2d = tumor_mask_3d[:, :, slice_idx]
 
-    # Normalize for clean visuals
-    slice_img = (slice_img - slice_img.min()) / (slice_img.max() - slice_img.min() + 1e-8)
+    # ================= HIGH‑QUALITY 2D PREPROCESSING =================
+    # Radiology-style contrast windowing
+    low, high = np.percentile(slice_img, (2, 98))
+    slice_img = np.clip(slice_img, low, high)
+    slice_img = (slice_img - low) / (high - low + 1e-8)
 
     # ================= 2D + 3D SIDE‑BY‑SIDE =================
     st.subheader("🧠 2D & 3D MRI Visualization")
@@ -94,20 +96,22 @@ if uploaded_file is not None:
     with col2d:
         st.markdown("**2D Slice View**")
 
-        fig2d, ax2d = plt.subplots(figsize=(3.2, 3.2))
+        fig2d, ax2d = plt.subplots(figsize=(3.6, 3.6), dpi=150)
+
         ax2d.imshow(
             slice_img.T,
             cmap="gray",
             origin="lower",
-            interpolation="bilinear"
+            interpolation="bicubic"
         )
         ax2d.imshow(
             tumor_mask_2d.T,
             cmap="Reds",
-            alpha=0.35,
+            alpha=0.25,
             origin="lower",
-            interpolation="bilinear"
+            interpolation="bicubic"
         )
+
         ax2d.set_title(f"Slice {slice_idx}", fontsize=9)
         ax2d.axis("off")
 
