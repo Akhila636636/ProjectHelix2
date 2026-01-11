@@ -55,7 +55,7 @@ if uploaded_file is not None:
     # ---- Upload to GCS ----
     bucket = storage_client.bucket(BUCKET_NAME)
     blob = bucket.blob(f"uploads/{uploaded_file.name}")
-    blob.upload_from_filename(tmp_path)
+    #blob.upload_from_filename(tmp_path)
 
     db.collection("uploads").add({
         "filename": uploaded_file.name,
